@@ -40,7 +40,7 @@ export async function sendWelcomeEmail(
   const roleLabel = isMentor ? "מנטור/ית" : "מנטי";
   const dashboardUrl = isMentor
     ? `${base()}/he/mentorship/mentor-dashboard/`
-    : `${base()}/he/mentorship/dashboard/`;
+    : `${base()}/he/mentorship/mentee-dashboard/`;
 
   await send(
     to,
@@ -86,7 +86,7 @@ export async function sendMentorResponseEmail(
   status: RequestStatus,
   mentorResponse: string | null
 ): Promise<void> {
-  const dashboardUrl = `${base()}/he/mentorship/dashboard/`;
+  const dashboardUrl = `${base()}/he/mentorship/mentee-dashboard/`;
   const statusLabel = STATUS_LABELS[status] ?? status;
   const responseBlock = mentorResponse
     ? `<blockquote style="border-right:3px solid #0d6efd;margin:16px 0;padding:8px 16px;color:#444;">${mentorResponse}</blockquote>`
