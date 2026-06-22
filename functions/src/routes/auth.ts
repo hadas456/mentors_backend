@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import * as admin from "firebase-admin";
 import { MentorProfile, MenteeProfile, UserDoc, UserRole } from "../types";
 import { signInWithPassword, IdentityToolkitError } from "../identityToolkit";
-import { sendWelcomeEmail, sendPasswordResetEmail } from "../email";
+import { sendVerificationEmail, sendPasswordResetEmail } from "../email";
 
 const router = Router();
 const db = () => admin.firestore();
@@ -125,25 +125,16 @@ router.post("/register", async (req: Request, res: Response) => {
 
   await saveRoleProfile(uid, role as "mentor" | "mentee", fullName!, email!, body, now);
 
-  sendWelcomeEmail(email!, fullName!, role as "mentor" | "mentee").catch((err) =>
-    console.error("Failed to send welcome email:", err)
-  );
-
   try {
-    const session = await signInWithPassword(email!, password!);
-    res.status(201).json({
-      idToken: session.idToken,
-      refreshToken: session.refreshToken,
-      expiresIn: session.expiresIn,
-      uid,
-      email,
-      fullName,
-      role,
-    });
+    const verificationLink = await admin.auth().generateEmailVerificationLink(email!);
+    sendVerificationEmail(email!, fullName!, verificationLink).catch((err) =>
+      console.error("Failed to send verification email:", err)
+    );
   } catch (err) {
-    const code = err instanceof IdentityToolkitError ? err.code : "UNKNOWN_ERROR";
-    res.status(201).json({ uid, email, role, error: { code } });
+    console.error("Failed to generate verification link:", err);
   }
+
+  res.status(201).json({ uid, email, role, pendingVerification: true });
 });
 
 // POST /auth/forgot-password - send a password reset email
@@ -164,6 +155,30 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// POST /auth/resend-verification - generate a new verification link and email it
+router.post("/resend-verification", async (req: Request, res: Response) => {
+  const { email } = req.body as { email?: string };
+  if (!email) {
+    res.status(400).json({ error: { code: "MISSING_FIELDS" } });
+    return;
+  }
+
+  try {
+    const userRecord = await admin.auth().getUserByEmail(email);
+    if (!userRecord.emailVerified) {
+      const userDoc = await db().collection("users").doc(userRecord.uid).get();
+      const fullName = (userDoc.data()?.fullName as string) ?? email;
+      const verificationLink = await admin.auth().generateEmailVerificationLink(email);
+      await sendVerificationEmail(email, fullName, verificationLink);
+    }
+  } catch (err) {
+    console.error("resend-verification error:", err);
+  }
+
+  // Always respond ok — don't reveal whether the email exists or is already verified
+  res.json({ ok: true });
+});
+
 // POST /auth/login - verify credentials via Identity Toolkit, return a Firebase ID token
 router.post("/login", async (req: Request, res: Response) => {
   const { email, password } = req.body as { email?: string; password?: string };
@@ -174,6 +189,15 @@ router.post("/login", async (req: Request, res: Response) => {
 
   try {
     const session = await signInWithPassword(email, password);
+
+    if (process.env.NODE_ENV !== "development") {
+      const userRecord = await admin.auth().getUser(session.localId);
+      if (!userRecord.emailVerified) {
+        res.status(403).json({ error: { code: "EMAIL_NOT_VERIFIED" } });
+        return;
+      }
+    }
+
     const userDoc = await db().collection("users").doc(session.localId).get();
     const data = userDoc.data();
     res.json({

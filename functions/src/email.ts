@@ -47,6 +47,24 @@ async function send(to: string, subject: string, html: string): Promise<void> {
   });
 }
 
+export async function sendVerificationEmail(
+  to: string,
+  fullName: string,
+  verificationLink: string
+): Promise<void> {
+  await send(
+    to,
+    "אמת/י את כתובת האימייל שלך — מעקף מנטורינג",
+    layout(`
+      <h2>שלום ${fullName},</h2>
+      <p>ברוך/ה הבא/ה למערכת המנטורינג של קהילת מעקף!</p>
+      <p>כדי להשלים את הרשמתך ולהתחיל להשתמש במערכת, יש לאמת את כתובת האימייל שלך:</p>
+      ${dashboardBtn(verificationLink, "אימות כתובת האימייל")}
+      <p style="color:#666;font-size:13px;">הקישור תקף ל-24 שעות. אם לא נרשמתם, ניתן להתעלם מהודעה זו.</p>
+    `)
+  );
+}
+
 export async function sendWelcomeEmail(
   to: string,
   fullName: string,
