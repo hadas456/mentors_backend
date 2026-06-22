@@ -1,22 +1,21 @@
-import nodemailer from "nodemailer";
+import { google } from "googleapis";
 import { RequestStatus } from "./types";
 
-// family:4 forces IPv4 — Railway's IPv6 routing to smtp.gmail.com times out
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  family: 4,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-} as Parameters<typeof nodemailer.createTransport>[0]);
+const auth = new google.auth.OAuth2(
+  process.env.GMAIL_CLIENT_ID,
+  process.env.GMAIL_CLIENT_SECRET,
+  "https://developers.google.com/oauthplayground"
+);
+auth.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
 
-const FROM = `מעקף <${process.env.GMAIL_USER}>`;
+const gmail = google.gmail({ version: "v1", auth });
 
 function base() {
-  return process.env.SITE_URL ?? "http://localhost:1313";
+  return process.env.SITE_URL ?? "https://maakaf.com";
+}
+
+function mimeWord(text: string) {
+  return `=?UTF-8?B?${Buffer.from(text).toString("base64")}?=`;
 }
 
 function layout(content: string) {
@@ -32,7 +31,20 @@ function dashboardBtn(url: string, label: string) {
 }
 
 async function send(to: string, subject: string, html: string): Promise<void> {
-  await transporter.sendMail({ from: FROM, to, subject, html });
+  const raw = [
+    `From: ${mimeWord("מעקף")} <${process.env.GMAIL_USER}>`,
+    `To: ${to}`,
+    `Subject: ${mimeWord(subject)}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/html; charset=UTF-8",
+    "",
+    html,
+  ].join("\r\n");
+
+  await gmail.users.messages.send({
+    userId: "me",
+    requestBody: { raw: Buffer.from(raw).toString("base64url") },
+  });
 }
 
 export async function sendWelcomeEmail(
@@ -63,15 +75,13 @@ export async function sendNewRequestEmail(
   menteeName: string,
   topic: string
 ): Promise<void> {
-  const dashboardUrl = `${base()}/he/mentorship/mentor-dashboard/`;
-
   await send(
     mentorEmail,
     `בקשת מנטורינג חדשה מ-${menteeName}`,
     layout(`
       <h2>שלום ${mentorName},</h2>
       <p><strong>${menteeName}</strong> שלח/ה לך בקשת מנטורינג חדשה בנושא: <strong>${topic}</strong>.</p>
-      ${dashboardBtn(dashboardUrl, "צפייה בבקשה ומענה")}
+      ${dashboardBtn(`${base()}/he/mentorship/mentor-dashboard/`, "צפייה בבקשה ומענה")}
     `)
   );
 }
@@ -90,7 +100,6 @@ export async function sendMentorResponseEmail(
   status: RequestStatus,
   mentorResponse: string | null
 ): Promise<void> {
-  const dashboardUrl = `${base()}/he/mentorship/mentee-dashboard/`;
   const statusLabel = STATUS_LABELS[status] ?? status;
   const responseBlock = mentorResponse
     ? `<blockquote style="border-right:3px solid #0d6efd;margin:16px 0;padding:8px 16px;color:#444;">${mentorResponse}</blockquote>`
@@ -103,7 +112,7 @@ export async function sendMentorResponseEmail(
       <h2>שלום ${menteeName},</h2>
       <p>${mentorName} עדכן/ה את הבקשה שלך לסטטוס: <strong>${statusLabel}</strong>.</p>
       ${responseBlock}
-      ${dashboardBtn(dashboardUrl, "מעבר לדשבורד שלי")}
+      ${dashboardBtn(`${base()}/he/mentorship/mentee-dashboard/`, "מעבר לדשבורד שלי")}
     `)
   );
 }
