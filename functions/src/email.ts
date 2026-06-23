@@ -10,8 +10,15 @@ auth.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
 
 const gmail = google.gmail({ version: "v1", auth });
 
-function base() {
-  return process.env.SITE_URL ?? "https://maakaf.com";
+const SITE_BASE = process.env.SITE_URL ?? "https://maakaf.com";
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
 }
 
 function mimeWord(text: string) {
@@ -27,7 +34,7 @@ function layout(content: string) {
 }
 
 function dashboardBtn(url: string, label: string) {
-  return `<p><a href="${url}" style="display:inline-block;padding:10px 20px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:5px;">${label}</a></p>`;
+  return `<p><a href="${url}" style="display:inline-block;padding:10px 20px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:5px;">${escapeHtml(label)}</a></p>`;
 }
 
 async function send(to: string, subject: string, html: string): Promise<void> {
@@ -47,24 +54,20 @@ async function send(to: string, subject: string, html: string): Promise<void> {
   });
 }
 
-export async function sendWelcomeEmail(
+export async function sendVerificationEmail(
   to: string,
   fullName: string,
-  role: "mentor" | "mentee"
+  verificationLink: string
 ): Promise<void> {
-  const isMentor = role === "mentor";
-  const roleLabel = isMentor ? "מנטור/ית" : "מנטי";
-  const dashboardUrl = isMentor
-    ? `${base()}/he/mentorship/mentor-dashboard/`
-    : `${base()}/he/mentorship/mentee-dashboard/`;
-
   await send(
     to,
-    "ברוך/ה הבא/ה למערכת המנטורינג של מעקף!",
+    "אמת/י את כתובת האימייל שלך — מעקף מנטורינג",
     layout(`
-      <h2>שלום ${fullName},</h2>
-      <p>החשבון שלך כ<strong>${roleLabel}</strong> במערכת המנטורינג של קהילת מעקף נוצר בהצלחה.</p>
-      ${dashboardBtn(dashboardUrl, "כניסה לדשבורד שלי")}
+      <h2>שלום ${escapeHtml(fullName)},</h2>
+      <p>ברוך/ה הבא/ה למערכת המנטורינג של קהילת מעקף!</p>
+      <p>כדי להשלים את הרשמתך ולהתחיל להשתמש במערכת, יש לאמת את כתובת האימייל שלך:</p>
+      ${dashboardBtn(verificationLink, "אימות כתובת האימייל")}
+      <p style="color:#666;font-size:13px;">הקישור תקף ל-24 שעות. אם לא נרשמתם, ניתן להתעלם מהודעה זו.</p>
     `)
   );
 }
@@ -79,9 +82,9 @@ export async function sendNewRequestEmail(
     mentorEmail,
     `בקשת מנטורינג חדשה מ-${menteeName}`,
     layout(`
-      <h2>שלום ${mentorName},</h2>
-      <p><strong>${menteeName}</strong> שלח/ה לך בקשת מנטורינג חדשה בנושא: <strong>${topic}</strong>.</p>
-      ${dashboardBtn(`${base()}/he/mentorship/mentor-dashboard/`, "צפייה בבקשה ומענה")}
+      <h2>שלום ${escapeHtml(mentorName)},</h2>
+      <p><strong>${escapeHtml(menteeName)}</strong> שלח/ה לך בקשת מנטורינג חדשה בנושא: <strong>${escapeHtml(topic)}</strong>.</p>
+      ${dashboardBtn(`${SITE_BASE}/he/mentorship/mentor-dashboard/`, "צפייה בבקשה ומענה")}
     `)
   );
 }
@@ -102,17 +105,17 @@ export async function sendMentorResponseEmail(
 ): Promise<void> {
   const statusLabel = STATUS_LABELS[status] ?? status;
   const responseBlock = mentorResponse
-    ? `<blockquote style="border-right:3px solid #0d6efd;margin:16px 0;padding:8px 16px;color:#444;">${mentorResponse}</blockquote>`
+    ? `<blockquote style="border-right:3px solid #0d6efd;margin:16px 0;padding:8px 16px;color:#444;">${escapeHtml(mentorResponse)}</blockquote>`
     : "";
 
   await send(
     menteeEmail,
     `עדכון בקשת המנטורינג שלך — ${statusLabel}`,
     layout(`
-      <h2>שלום ${menteeName},</h2>
-      <p>${mentorName} עדכן/ה את הבקשה שלך לסטטוס: <strong>${statusLabel}</strong>.</p>
+      <h2>שלום ${escapeHtml(menteeName)},</h2>
+      <p>${escapeHtml(mentorName)} עדכן/ה את הבקשה שלך לסטטוס: <strong>${statusLabel}</strong>.</p>
       ${responseBlock}
-      ${dashboardBtn(`${base()}/he/mentorship/mentee-dashboard/`, "מעבר לדשבורד שלי")}
+      ${dashboardBtn(`${SITE_BASE}/he/mentorship/mentee-dashboard/`, "מעבר לדשבורד שלי")}
     `)
   );
 }
