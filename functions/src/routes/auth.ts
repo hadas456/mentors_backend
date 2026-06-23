@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import * as admin from "firebase-admin";
 import { MentorProfile, MenteeProfile, UserDoc, UserRole } from "../types";
-import { signInWithPassword, IdentityToolkitError } from "../identityToolkit";
+import { signInWithPassword, refreshIdToken, IdentityToolkitError } from "../identityToolkit";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../email";
 
 const router = Router();
@@ -87,7 +87,7 @@ async function saveRoleProfile(
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// POST /auth/register - create a Firebase Auth user + users/{uid} + role profile, then sign in
+// POST /auth/register
 router.post("/register", async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
   const { role, fullName, email, password } = body as {
@@ -113,17 +113,24 @@ router.post("/register", async (req: Request, res: Response) => {
     return;
   }
 
-  const now = admin.firestore.Timestamp.now();
-  const userDoc: UserDoc = { role: role!, fullName: fullName!, email: email!, isAdmin: false, createdAt: now };
-  await db().collection("users").doc(uid).set(userDoc);
+  try {
+    const now = admin.firestore.Timestamp.now();
+    const userDoc: UserDoc = { role: role!, fullName: fullName!, email: email!, isAdmin: false, createdAt: now };
+    await db().collection("users").doc(uid).set(userDoc);
 
-  // Admin accounts are created pending approval — no profile doc, no auto sign-in
-  if (role === "admin") {
-    res.status(201).json({ uid, email, role: "admin", pending: true });
+    if (role === "admin") {
+      res.status(201).json({ uid, email, role: "admin", pending: true });
+      return;
+    }
+
+    await saveRoleProfile(uid, role as "mentor" | "mentee", fullName!, email!, body, now);
+  } catch (err) {
+    // Firestore failed — roll back the Auth user to prevent an orphaned account
+    await admin.auth().deleteUser(uid).catch(() => {});
+    console.error("Register: Firestore write failed", err);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR" } });
     return;
   }
-
-  await saveRoleProfile(uid, role as "mentor" | "mentee", fullName!, email!, body, now);
 
   try {
     const verificationLink = await admin.auth().generateEmailVerificationLink(email!);
@@ -137,7 +144,7 @@ router.post("/register", async (req: Request, res: Response) => {
   res.status(201).json({ uid, email, role, pendingVerification: true });
 });
 
-// POST /auth/forgot-password - send a password reset email
+// POST /auth/forgot-password
 router.post("/forgot-password", async (req: Request, res: Response) => {
   const { email } = req.body as { email?: string };
   if (!email) {
@@ -155,7 +162,7 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// GET /auth/verify-status/:uid - poll whether a user's email has been verified yet
+// GET /auth/verify-status/:uid - poll whether a user's email has been verified
 router.get("/verify-status/:uid", async (req: Request, res: Response) => {
   try {
     const userRecord = await admin.auth().getUser(req.params.uid);
@@ -165,7 +172,7 @@ router.get("/verify-status/:uid", async (req: Request, res: Response) => {
   }
 });
 
-// POST /auth/resend-verification - generate a new verification link and email it
+// POST /auth/resend-verification
 router.post("/resend-verification", async (req: Request, res: Response) => {
   const { email } = req.body as { email?: string };
   if (!email) {
@@ -189,7 +196,23 @@ router.post("/resend-verification", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// POST /auth/login - verify credentials via Identity Toolkit, return a Firebase ID token
+// POST /auth/refresh - exchange a refresh token for a new ID token
+router.post("/refresh", async (req: Request, res: Response) => {
+  const { refreshToken } = req.body as { refreshToken?: string };
+  if (!refreshToken) {
+    res.status(400).json({ error: { code: "MISSING_FIELDS" } });
+    return;
+  }
+  try {
+    const session = await refreshIdToken(refreshToken);
+    res.json(session);
+  } catch (err) {
+    const code = err instanceof IdentityToolkitError ? err.code : "UNKNOWN_ERROR";
+    res.status(401).json({ error: { code } });
+  }
+});
+
+// POST /auth/login
 router.post("/login", async (req: Request, res: Response) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
@@ -197,15 +220,21 @@ router.post("/login", async (req: Request, res: Response) => {
     return;
   }
 
+  // Pre-check emailVerified to avoid creating and discarding a Firebase session
+  // token for unverified users. If the user is not found here, signInWithPassword
+  // will handle it with the correct error code.
   try {
-    const session = await signInWithPassword(email, password);
-
-    const userRecord = await admin.auth().getUser(session.localId);
-    if (!userRecord.emailVerified) {
-      res.status(403).json({ error: { code: "EMAIL_NOT_VERIFIED" }, uid: session.localId });
+    const preCheck = await admin.auth().getUserByEmail(email);
+    if (!preCheck.emailVerified) {
+      res.status(403).json({ error: { code: "EMAIL_NOT_VERIFIED" }, uid: preCheck.uid });
       return;
     }
+  } catch {
+    // User not found — fall through to signInWithPassword
+  }
 
+  try {
+    const session = await signInWithPassword(email, password);
     const userDoc = await db().collection("users").doc(session.localId).get();
     const data = userDoc.data();
     res.json({
