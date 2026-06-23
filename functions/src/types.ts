@@ -61,3 +61,14 @@ export interface MentorshipRequest {
 export interface Topic {
   name: string;
 }
+
+export type NotificationType = "new_request" | "request_response";
+
+export interface NotificationDoc {
+  type: NotificationType;
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt: firestore.Timestamp;
+  requestId?: string;
+}

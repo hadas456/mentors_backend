@@ -72,5 +72,13 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // notifications/{uid}/items/{id} - private to the owning user; only the backend writes them
+    match /notifications/{uid}/items/{notifId} {
+      allow read: if isSelf(uid);
+      allow update: if isSelf(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["read"]);
+      allow create, delete: if isAdmin();
+    }
   }
 }

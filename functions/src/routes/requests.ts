@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { MentorshipRequest, RequestStatus } from "../types";
 import { sendNewRequestEmail, sendMentorResponseEmail } from "../email";
+import { notifyNewRequest, notifyRequestResponse } from "../notifications";
 
 const router = Router();
 const db = () => admin.firestore();
@@ -54,6 +55,9 @@ router.post("/", requireAuth, async (req: AuthedRequest, res) => {
       userDoc.data()?.fullName,
       topic
     ).catch((err) => console.error("Failed to send new-request email:", err));
+
+    notifyNewRequest(mentorId, userDoc.data()?.fullName, topic, ref.id)
+      .catch((err) => console.error("Failed to create new-request notification:", err));
 
     res.status(201).json({ id: ref.id, ...data });
   } catch (err) {
@@ -113,6 +117,9 @@ router.patch("/:id", requireAuth, async (req: AuthedRequest, res) => {
         status,
         mentorResponse ?? null
       ).catch((err) => console.error("Failed to send mentor-response email:", err));
+
+      notifyRequestResponse(current.menteeId, current.mentorName, status, req.params.id)
+        .catch((err) => console.error("Failed to create request-response notification:", err));
 
     } else if (isMentee && current.status === "needs_info" && status === "pending") {
       await ref.update({ status: "pending", updatedAt: now });
