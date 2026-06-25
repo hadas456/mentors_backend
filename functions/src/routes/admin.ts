@@ -6,7 +6,7 @@ import { RequestStatus } from "../types";
 const router = Router();
 const db = () => admin.firestore();
 
-const STATUSES: RequestStatus[] = ["pending", "approved", "rejected", "needs_info", "completed"];
+const STATUSES: RequestStatus[] = ["pending", "approved", "rejected", "needs_info", "completed", "canceled"];
 
 // GET /admin/stats - counts + request status breakdown for the admin page
 router.get("/stats", requireAuth, requireAdmin, async (_req, res) => {
@@ -41,6 +41,44 @@ router.get("/stats", requireAuth, requireAdmin, async (_req, res) => {
     });
   } catch (err) {
     console.error("GET /admin/stats error:", err);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR" } });
+  }
+});
+
+// GET /admin/users/mentors
+router.get("/users/mentors", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const snapshot = await db().collection("mentorProfiles").orderBy("createdAt", "desc").get();
+    res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+  } catch (err) {
+    console.error("GET /admin/users/mentors error:", err);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR" } });
+  }
+});
+
+// GET /admin/users/mentees
+router.get("/users/mentees", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const snapshot = await db().collection("menteeProfiles").orderBy("createdAt", "desc").get();
+    res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+  } catch (err) {
+    console.error("GET /admin/users/mentees error:", err);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR" } });
+  }
+});
+
+// GET /admin/requests - all requests for the admin table
+router.get("/requests", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const snapshot = await db()
+      .collection("mentorshipRequests")
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const requests = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    res.json(requests);
+  } catch (err) {
+    console.error("GET /admin/requests error:", err);
     res.status(500).json({ error: { code: "INTERNAL_ERROR" } });
   }
 });

@@ -119,6 +119,7 @@ router.post("/register", async (req: Request, res: Response) => {
     await db().collection("users").doc(uid).set(userDoc);
 
     if (role === "admin") {
+      await admin.auth().updateUser(uid, { emailVerified: true });
       res.status(201).json({ uid, email, role: "admin", pending: true });
       return;
     }
