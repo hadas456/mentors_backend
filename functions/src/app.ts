@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 
 import topicsRouter from "./routes/topics";
 import mentorsRouter from "./routes/mentors";
@@ -10,6 +11,8 @@ import authRouter from "./routes/auth";
 import notificationsRouter from "./routes/notifications";
 
 const app = express();
+
+app.use(helmet());
 
 // Restrict CORS to the configured frontend origin (falls back to same-origin in prod)
 const allowedOrigin = process.env.CORS_ORIGIN ?? process.env.SITE_URL ?? "https://maakaf.com";
@@ -35,6 +38,12 @@ app.use("/mentees", menteesRouter);
 app.use("/requests", requestsRouter);
 app.use("/admin", adminRouter);
 app.use("/notifications", notificationsRouter);
+
+if (process.env.ENABLE_DEV_ENDPOINTS === "true") {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const devRouter = require("./dev/routes").default;
+  app.use("/auth/dev", devRouter);
+}
 
 app.use((_req, res) => {
   res.status(404).json({ error: { code: "NOT_FOUND" } });

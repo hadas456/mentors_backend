@@ -1,0 +1,802 @@
+{
+  "info": {
+    "name": "Maakaf Mentorship API",
+    "_postman_id": "maakaf-mentorship-api-v1",
+    "description": "Complete API collection for the MAAKAF mentorship system.\n\nSetup:\n1. Set baseUrl to http://localhost:3000\n2. Ensure ENABLE_DEV_ENDPOINTS=true is in .env\n3. Click 'Run collection' — all steps are automated\n\nThe first request (Cleanup) wipes previous test data so the suite is always idempotent.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",        "value": "http://localhost:3000" },
+    { "key": "idToken",        "value": "" },
+    { "key": "refreshToken",   "value": "" },
+    { "key": "mentorUid",      "value": "" },
+    { "key": "menteeUid",      "value": "" },
+    { "key": "otpCode",        "value": "" },
+    { "key": "mentorId",       "value": "" },
+    { "key": "requestId",      "value": "" },
+    { "key": "notificationId", "value": "" }
+  ],
+  "item": [
+
+    {
+      "name": "🔐 Auth",
+      "item": [
+
+        {
+          "name": "⚙️ Cleanup Test Users",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/auth/dev/cleanup", "host": ["{{baseUrl}}"], "path": ["auth","dev","cleanup"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Cleanup succeeded', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+          ]}}]
+        },
+
+        {
+          "name": "Register Mentor",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth","register"] },
+            "body": { "mode": "raw", "raw": "{\n  \"role\": \"mentor\",\n  \"fullName\": \"דניאל כהן\",\n  \"email\": \"test.mentor@maakaf-test.dev\",\n  \"password\": \"Test1234!\",\n  \"currentRole\": \"Senior Developer\",\n  \"company\": \"Wix\",\n  \"expertise\": [\"React\", \"Node.js\", \"TypeScript\"],\n  \"availability\": \"available\",\n  \"linkedIn\": \"https://linkedin.com/in/daniel-cohen-test\",\n  \"calendlyUrl\": \"https://calendly.com/daniel-cohen-test\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 201', () => pm.response.to.have.status(201));",
+            "if (d.uid) pm.collectionVariables.set('mentorUid', d.uid);"
+          ]}}]
+        },
+
+        {
+          "name": "Verify OTP — Mentor",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/verify-code", "host": ["{{baseUrl}}"], "path": ["auth","verify-code"] },
+            "body": { "mode": "raw", "raw": "{\n  \"uid\": \"{{mentorUid}}\",\n  \"code\": \"{{otpCode}}\",\n  \"email\": \"test.mentor@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [
+            { "listen": "prerequest", "script": { "exec": [
+              "const base = pm.collectionVariables.get('baseUrl');",
+              "const uid  = pm.collectionVariables.get('mentorUid');",
+              "pm.sendRequest({ url: base+'/auth/dev/peek-otp/'+uid, method:'GET' }, (err,res) => {",
+              "  if (!err && res.code===200) {",
+              "    const c = res.json().verificationCode;",
+              "    if (c) pm.collectionVariables.set('otpCode', c);",
+              "  }",
+              "});"
+            ]}},
+            { "listen": "test", "script": { "exec": [
+              "pm.test('Mentor verified — status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Mentor has idToken', () => pm.expect(pm.response.json().idToken).to.be.a('string'));"
+            ]}}
+          ]
+        },
+
+        {
+          "name": "Register Mentee",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth","register"] },
+            "body": { "mode": "raw", "raw": "{\n  \"role\": \"mentee\",\n  \"fullName\": \"מיה לוי\",\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"Test1234!\",\n  \"experienceLevel\": \"beginner\",\n  \"interests\": [\"Web Development\", \"React\", \"JavaScript\"],\n  \"goals\": \"למצוא עבודה ראשונה בתחום הפיתוח\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 201', () => pm.response.to.have.status(201));",
+            "if (d.uid) pm.collectionVariables.set('menteeUid', d.uid);"
+          ]}}]
+        },
+
+        {
+          "name": "Verify OTP — Mentee",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/verify-code", "host": ["{{baseUrl}}"], "path": ["auth","verify-code"] },
+            "body": { "mode": "raw", "raw": "{\n  \"uid\": \"{{menteeUid}}\",\n  \"code\": \"{{otpCode}}\",\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [
+            { "listen": "prerequest", "script": { "exec": [
+              "const base = pm.collectionVariables.get('baseUrl');",
+              "const uid  = pm.collectionVariables.get('menteeUid');",
+              "pm.sendRequest({ url: base+'/auth/dev/peek-otp/'+uid, method:'GET' }, (err,res) => {",
+              "  if (!err && res.code===200) {",
+              "    const c = res.json().verificationCode;",
+              "    if (c) pm.collectionVariables.set('otpCode', c);",
+              "  }",
+              "});"
+            ]}},
+            { "listen": "test", "script": { "exec": [
+              "pm.test('Mentee verified — status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Mentee has idToken', () => pm.expect(pm.response.json().idToken).to.be.a('string'));"
+            ]}}
+          ]
+        },
+
+        {
+          "name": "Register Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth","register"] },
+            "body": { "mode": "raw", "raw": "{\n  \"role\": \"admin\",\n  \"fullName\": \"מנהל מערכת\",\n  \"email\": \"test.admin@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Admin created', () => pm.response.to.have.status(201));",
+            "pm.test('Admin pending', () => pm.expect(pm.response.json().pending).to.be.true);"
+          ]}}]
+        },
+
+        {
+          "name": "Login (Mentor) — saves mentorId + token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentor@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Mentor login 200', () => pm.response.to.have.status(200));",
+            "pm.test('Role is mentor',   () => pm.expect(d.role).to.equal('mentor'));",
+            "if (d.idToken)      pm.collectionVariables.set('idToken',      d.idToken);",
+            "if (d.refreshToken) pm.collectionVariables.set('refreshToken', d.refreshToken);",
+            "if (d.uid)          pm.collectionVariables.set('mentorId',     d.uid);"
+          ]}}]
+        },
+
+        {
+          "name": "Login (Mentee) — saves token for mentee actions",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Mentee login 200', () => pm.response.to.have.status(200));",
+            "pm.test('Role is mentee',   () => pm.expect(d.role).to.equal('mentee'));",
+            "if (d.idToken)      pm.collectionVariables.set('idToken',      d.idToken);",
+            "if (d.refreshToken) pm.collectionVariables.set('refreshToken', d.refreshToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth","refresh"] },
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('New idToken', () => pm.expect(d.idToken).to.be.a('string'));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Check Verify Status",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/auth/verify-status/{{menteeUid}}", "host": ["{{baseUrl}}"], "path": ["auth","verify-status","{{menteeUid}}"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Email is verified', () => pm.expect(pm.response.json().verified).to.be.true);"
+          ]}}]
+        },
+
+        {
+          "name": "Resend Verification Code",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/resend-verification", "host": ["{{baseUrl}}"], "path": ["auth","resend-verification"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('ok true',    () => pm.expect(pm.response.json().ok).to.be.true);"
+          ]}}]
+        },
+
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/forgot-password", "host": ["{{baseUrl}}"], "path": ["auth","forgot-password"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('ok true',    () => pm.expect(d.ok).to.be.true);"
+          ]}}]
+        },
+
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/reset-password", "host": ["{{baseUrl}}"], "path": ["auth","reset-password"] },
+            "body": { "mode": "raw", "raw": "{\n  \"uid\": \"{{menteeUid}}\",\n  \"code\": \"{{otpCode}}\",\n  \"newPassword\": \"Test1234!\"\n}" }
+          },
+          "event": [
+            { "listen": "prerequest", "script": { "exec": [
+              "const base = pm.collectionVariables.get('baseUrl');",
+              "const uid  = pm.collectionVariables.get('menteeUid');",
+              "pm.sendRequest({ url: base+'/auth/dev/peek-otp/'+uid, method:'GET' }, (err,res) => {",
+              "  if (!err && res.code===200) {",
+              "    const c = res.json().resetCode;",
+              "    if (c) pm.collectionVariables.set('otpCode', c);",
+              "  }",
+              "});"
+            ]}},
+            { "listen": "test", "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('ok true',    () => pm.expect(pm.response.json().ok).to.be.true);"
+            ]}}
+          ]
+        },
+
+        {
+          "name": "Forgot Password — Unregistered Email (expect 404)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/forgot-password", "host": ["{{baseUrl}}"], "path": ["auth","forgot-password"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"nobody@doesnotexist.dev\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 404',        () => pm.response.to.have.status(404));",
+            "pm.test('USER_NOT_FOUND',    () => pm.expect(pm.response.json().error.code).to.equal('USER_NOT_FOUND'));"
+          ]}}]
+        },
+
+        {
+          "name": "Login Without Token (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"WrongPassword!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Wrong password → 401', () => pm.response.to.have.status(401));"
+          ]}}]
+        },
+
+        {
+          "name": "Switch to Mentor Token (for subsequent folders)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentor@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Mentor re-login 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken)      pm.collectionVariables.set('idToken',      d.idToken);",
+            "if (d.refreshToken) pm.collectionVariables.set('refreshToken', d.refreshToken);"
+          ]}}]
+        }
+
+      ]
+    },
+
+    {
+      "name": "👨‍💼 Mentors",
+      "item": [
+
+        {
+          "name": "List All Mentors",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/mentors", "host": ["{{baseUrl}}"], "path": ["mentors"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200',    () => pm.response.to.have.status(200));",
+            "pm.test('Returns array', () => pm.expect(d).to.be.an('array'));",
+            "pm.test('Has mentors',   () => pm.expect(d.length).to.be.above(0));",
+            "if (d[0]?.id) pm.collectionVariables.set('mentorId', d[0].id);"
+          ]}}]
+        },
+
+        {
+          "name": "List Mentors — Filter by Availability",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/mentors?availability=available", "host": ["{{baseUrl}}"], "path": ["mentors"], "query": [{ "key": "availability", "value": "available" }] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('All available', () => pm.response.json().forEach(m => pm.expect(m.availability).to.equal('available')));"
+          ]}}]
+        },
+
+        {
+          "name": "Get Single Mentor",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/mentors/{{mentorId}}", "host": ["{{baseUrl}}"], "path": ["mentors","{{mentorId}}"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',    () => pm.response.to.have.status(200));",
+            "pm.test('Has fullName',  () => pm.expect(pm.response.json().fullName).to.be.a('string'));"
+          ]}}]
+        },
+
+        {
+          "name": "Update My Mentor Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/mentors/me", "host": ["{{baseUrl}}"], "path": ["mentors","me"] },
+            "body": { "mode": "raw", "raw": "{\n  \"currentRole\": \"Tech Lead\",\n  \"company\": \"Wix\",\n  \"expertise\": [\"React\", \"Node.js\", \"TypeScript\", \"GraphQL\"],\n  \"availability\": \"available\",\n  \"linkedIn\": \"https://linkedin.com/in/daniel-cohen-test\",\n  \"calendlyUrl\": \"https://calendly.com/daniel-cohen-test\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',        () => pm.response.to.have.status(200));",
+            "pm.test('GraphQL in expertise', () => pm.expect(pm.response.json().expertise).to.include('GraphQL'));"
+          ]}}]
+        }
+
+      ]
+    },
+
+    {
+      "name": "👩‍🎓 Mentees",
+      "item": [
+
+        {
+          "name": "Switch to Mentee Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Mentee login 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Get My Mentee Profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/mentees/me", "host": ["{{baseUrl}}"], "path": ["mentees","me"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',    () => pm.response.to.have.status(200));",
+            "pm.test('Has interests', () => pm.expect(pm.response.json().interests).to.be.an('array'));"
+          ]}}]
+        },
+
+        {
+          "name": "Update My Mentee Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/mentees/me", "host": ["{{baseUrl}}"], "path": ["mentees","me"] },
+            "body": { "mode": "raw", "raw": "{\n  \"experienceLevel\": \"intermediate\",\n  \"interests\": [\"React\", \"Node.js\", \"Open Source\"],\n  \"goals\": \"לעבוד בחברת סטארטאפ\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',         () => pm.response.to.have.status(200));",
+            "pm.test('Updated level',      () => pm.expect(pm.response.json().experienceLevel).to.equal('intermediate'));"
+          ]}}]
+        }
+
+      ]
+    },
+
+    {
+      "name": "📋 Requests",
+      "item": [
+
+        {
+          "name": "Switch to Mentee Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Create Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests", "host": ["{{baseUrl}}"], "path": ["requests"] },
+            "body": { "mode": "raw", "raw": "{\n  \"mentorId\": \"{{mentorId}}\",\n  \"topic\": \"הכנה לראיון עבודה בחברות טכנולוגיה\",\n  \"description\": \"אני מחפשת עצות על ראיונות טכניים ב-React\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 201',       () => pm.response.to.have.status(201));",
+            "pm.test('Status is pending',() => pm.expect(d.status).to.equal('pending'));",
+            "if (d.id) pm.collectionVariables.set('requestId', d.id);"
+          ]}}]
+        },
+
+        {
+          "name": "Duplicate Request (expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests", "host": ["{{baseUrl}}"], "path": ["requests"] },
+            "body": { "mode": "raw", "raw": "{\n  \"mentorId\": \"{{mentorId}}\",\n  \"topic\": \"בקשה כפולה\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 409',          () => pm.response.to.have.status(409));",
+            "pm.test('DUPLICATE_REQUEST',   () => pm.expect(pm.response.json().error.code).to.equal('DUPLICATE_REQUEST'));"
+          ]}}]
+        },
+
+        {
+          "name": "List My Requests (Mentee)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/requests", "host": ["{{baseUrl}}"], "path": ["requests"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',    () => pm.response.to.have.status(200));",
+            "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+            "pm.test('Has 1 request', () => pm.expect(pm.response.json().length).to.be.above(0));"
+          ]}}]
+        },
+
+        {
+          "name": "Switch to Mentor Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentor@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Request More Info (Mentor → needs_info)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests/{{requestId}}", "host": ["{{baseUrl}}"], "path": ["requests","{{requestId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"needs_info\",\n  \"mentorResponse\": \"האם תוכלי לספר יותר על הרקע שלך?\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',        () => pm.response.to.have.status(200));",
+            "pm.test('Status needs_info', () => pm.expect(pm.response.json().status).to.equal('needs_info'));"
+          ]}}]
+        },
+
+        {
+          "name": "Switch to Mentee Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Reply After Needs Info (Mentee → pending)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests/{{requestId}}", "host": ["{{baseUrl}}"], "path": ["requests","{{requestId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"pending\",\n  \"menteeReply\": \"אני מגיעה מרקע של QA ועברתי קורס פולסטאק\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',      () => pm.response.to.have.status(200));",
+            "pm.test('Back to pending', () => pm.expect(pm.response.json().status).to.equal('pending'));"
+          ]}}]
+        },
+
+        {
+          "name": "Switch to Mentor Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentor@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Approve Request (Mentor → approved)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests/{{requestId}}", "host": ["{{baseUrl}}"], "path": ["requests","{{requestId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"approved\",\n  \"mentorResponse\": \"שמחתי לעזור! אני זמין לפגישה בשבוע הבא.\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',       () => pm.response.to.have.status(200));",
+            "pm.test('Status approved',  () => pm.expect(pm.response.json().status).to.equal('approved'));"
+          ]}}]
+        },
+
+        {
+          "name": "Get Request Timeline",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/requests/{{requestId}}/timeline", "host": ["{{baseUrl}}"], "path": ["requests","{{requestId}}","timeline"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',    () => pm.response.to.have.status(200));",
+            "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+            "pm.test('Has events',    () => pm.expect(pm.response.json().length).to.be.above(0));"
+          ]}}]
+        },
+
+        {
+          "name": "Complete Request (Mentor → completed)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests/{{requestId}}", "host": ["{{baseUrl}}"], "path": ["requests","{{requestId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"completed\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',        () => pm.response.to.have.status(200));",
+            "pm.test('Status completed',  () => pm.expect(pm.response.json().status).to.equal('completed'));"
+          ]}}]
+        },
+
+        {
+          "name": "Switch to Mentee Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentee@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Create Request #2 (for cancel test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests", "host": ["{{baseUrl}}"], "path": ["requests"] },
+            "body": { "mode": "raw", "raw": "{\n  \"mentorId\": \"{{mentorId}}\",\n  \"topic\": \"בקשה שניה לבדיקת ביטול\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 201',        () => pm.response.to.have.status(201));",
+            "pm.test('Status is pending', () => pm.expect(d.status).to.equal('pending'));",
+            "if (d.id) pm.collectionVariables.set('requestId', d.id);"
+          ]}}]
+        },
+
+        {
+          "name": "Cancel Request (Mentee → canceled)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/requests/{{requestId}}", "host": ["{{baseUrl}}"], "path": ["requests","{{requestId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"canceled\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',       () => pm.response.to.have.status(200));",
+            "pm.test('Status canceled',  () => pm.expect(pm.response.json().status).to.equal('canceled'));"
+          ]}}]
+        }
+
+      ]
+    },
+
+    {
+      "name": "📚 Topics",
+      "item": [
+
+        {
+          "name": "List Topics",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/topics", "host": ["{{baseUrl}}"], "path": ["topics"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200',    () => pm.response.to.have.status(200));",
+            "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+          ]}}]
+        },
+
+        {
+          "name": "Add Topic — Non-Admin (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{idToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/topics", "host": ["{{baseUrl}}"], "path": ["topics"] },
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"בינה מלאכותית\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Non-admin → 403', () => pm.response.to.have.status(403));"
+          ]}}]
+        }
+
+      ]
+    },
+
+    {
+      "name": "🔔 Notifications",
+      "item": [
+
+        {
+          "name": "Switch to Mentor Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth","login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test.mentor@maakaf-test.dev\",\n  \"password\": \"Test1234!\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "if (d.idToken) pm.collectionVariables.set('idToken', d.idToken);"
+          ]}}]
+        },
+
+        {
+          "name": "Get My Notifications",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications", "host": ["{{baseUrl}}"], "path": ["notifications"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200',    () => pm.response.to.have.status(200));",
+            "pm.test('Returns array', () => pm.expect(d).to.be.an('array'));",
+            "if (d.length > 0) pm.collectionVariables.set('notificationId', d[0].id);"
+          ]}}]
+        },
+
+        {
+          "name": "Mark Notification Read",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications/{{notificationId}}/read", "host": ["{{baseUrl}}"], "path": ["notifications","{{notificationId}}","read"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200 or 404', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+          ]}}]
+        },
+
+        {
+          "name": "Mark All Notifications Read",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications/read-all", "host": ["{{baseUrl}}"], "path": ["notifications","read-all"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('ok true',    () => pm.expect(pm.response.json().ok).to.be.true);"
+          ]}}]
+        }
+
+      ]
+    },
+
+    {
+      "name": "🛡️ Admin",
+      "description": "Admin requires isAdmin=true in Firestore. Set it manually for test.admin@maakaf-test.dev.",
+      "item": [
+
+        {
+          "name": "Access Without Token (expect 401)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/admin/stats", "host": ["{{baseUrl}}"], "path": ["admin","stats"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('No token → 401', () => pm.response.to.have.status(401));"
+          ]}}]
+        },
+
+        {
+          "name": "Get Stats (as Mentor — expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/stats", "host": ["{{baseUrl}}"], "path": ["admin","stats"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Non-admin → 403', () => pm.response.to.have.status(403));"
+          ]}}]
+        },
+
+        {
+          "name": "Get All Requests (as Mentor — expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/requests", "host": ["{{baseUrl}}"], "path": ["admin","requests"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Non-admin → 403', () => pm.response.to.have.status(403));"
+          ]}}]
+        }
+
+      ]
+    }
+
+  ]
+}

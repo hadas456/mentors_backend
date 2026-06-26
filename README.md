@@ -17,6 +17,7 @@ system. Consumed by the מנטורינג pages in
   the Identity Toolkit REST API. The frontend never uses the Firebase SDK; it stores
   the returned ID token and sends it as `Authorization: Bearer <token>`.
 - Gmail API (OAuth2) — transactional emails (verification, mentorship requests, password reset)
+- Helmet — HTTP security headers (X-Content-Type-Options, Strict-Transport-Security, etc.)
 
 ### Shared utilities (`functions/src/`)
 
@@ -24,6 +25,14 @@ system. Consumed by the מנטורינג pages in
 | --- | --- |
 | `utils.ts` | `generateOTP()` (crypto-random 6-digit code), `getOTPExpiry()`, `timingSafeEqual()` (constant-time comparison), `parseAvailability()` |
 | `rateLimiter.ts` | In-memory per-key rate limiter with auto-pruning; used on login, OTP and reset endpoints |
+
+### Dev/test code (`functions/src/dev/`)
+
+Only loaded when `ENABLE_DEV_ENDPOINTS=true`. Never registered in production.
+
+| File | Purpose |
+| --- | --- |
+| `routes.ts` | `DELETE /auth/dev/cleanup` — wipe test users; `GET /auth/dev/peek-otp/:uid` — read OTP from Firestore for automated Postman tests |
 
 `functions/src/index.ts` is a dormant Firebase Cloud Functions entry kept for future
 use if the project moves to the Firebase Blaze billing plan.
@@ -207,6 +216,8 @@ First time only: `cd functions && npm install`.
 
 | Mechanism | Detail |
 | --- | --- |
+| **HTTP security headers** | Helmet sets `X-Content-Type-Options`, `Strict-Transport-Security`, `X-Frame-Options`, and 10+ others on every response. |
+| **Startup validation** | Server exits on startup if any required env var is missing; logs a loud warning if `ENABLE_DEV_ENDPOINTS=true`. |
 | **Rate limiting** | Login: 10/15 min per email. OTP verify & reset: 5/15 min per UID. Forgot-password & resend: 3/10 min per email. Blocked → `429 TOO_MANY_ATTEMPTS`. Counter cleared on success. |
 | **Timing-safe OTP** | Code comparisons use `crypto.timingSafeEqual()` to prevent timing-based enumeration. |
 | **Crypto-random OTP** | `crypto.randomInt()` — uniform distribution, no modulo bias. |
@@ -243,6 +254,18 @@ Deploy rules independently of the API:
 ```sh
 firebase deploy --only firestore:rules
 ```
+
+## Testing
+
+Manual API tests are in `tests/`. See [`tests/README_TESTS.md`](tests/README_TESTS.md) for full setup instructions.
+
+**Quick start:**
+1. Add `ENABLE_DEV_ENDPOINTS=true` to `functions/.env`
+2. Start the backend: `cd functions && npm run dev`
+3. In Postman: **Import** → `tests/Maakaf Mentorship API.postman_collection.json`
+4. **Run collection** with 400 ms delay
+
+The first request cleans up previous test data automatically.
 
 ## Firebase Cloud Functions (dormant)
 
