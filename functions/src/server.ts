@@ -20,7 +20,9 @@ if (admin.apps.length === 0) {
 const REQUIRED_ENV = [
   "FIREBASE_API_KEY",
   "GMAIL_USER",
-  "GMAIL_APP_PASSWORD",
+  "GMAIL_CLIENT_ID",
+  "GMAIL_CLIENT_SECRET",
+  "GMAIL_REFRESH_TOKEN",
 ];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
 if (missing.length) {

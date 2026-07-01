@@ -179,9 +179,11 @@ SITE_URL=http://localhost:1313
 # Allowed CORS origin (defaults to SITE_URL; set to production domain in prod)
 CORS_ORIGIN=http://localhost:1313
 
-# Gmail App Password — myaccount.google.com/apppasswords (requires 2FA)
+# Gmail API OAuth2 (console.cloud.google.com → Gmail API → OAuth2)
 GMAIL_USER=donotreplymkf@gmail.com
-GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+GMAIL_CLIENT_ID=xxxx.apps.googleusercontent.com
+GMAIL_CLIENT_SECRET=xxxx
+GMAIL_REFRESH_TOKEN=xxxx
 
 # Suppress outgoing emails in local dev (do NOT set in production)
 DISABLE_EMAILS=true
@@ -194,7 +196,7 @@ FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 ```
 
 `FIREBASE_API_KEY` — Firebase Web API key from Firebase Console → Project settings → General.  
-`GMAIL_USER` / `GMAIL_APP_PASSWORD` — Gmail sender account and its App Password. Enable 2FA on the account, then generate a password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords). App Passwords never expire.  
+`GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` — Gmail API OAuth2 credentials. Create an OAuth2 client at [console.cloud.google.com](https://console.cloud.google.com) with the Gmail API enabled, then generate a refresh token via the OAuth2 Playground.  
 `DISABLE_EMAILS=true` — set in `.env` to suppress outgoing emails during local development. Emails log to the console instead. Do not set this in production.  
 `SITE_URL` — base URL of the frontend. Used in email links. Set to the production domain when deploying.
 
@@ -228,7 +230,7 @@ First time only: `cd functions && npm install`.
 
 ## Email notifications
 
-Handled by `functions/src/email.ts` via nodemailer over Gmail SMTP (App Password). All sends are fire-and-forget — email failures are logged but never block the API response. Set `DISABLE_EMAILS=true` in `.env` to suppress emails locally.
+Handled by `functions/src/email.ts` via the Gmail API (OAuth2). All sends are fire-and-forget — email failures are logged but never block the API response. Set `DISABLE_EMAILS=true` in `.env` to suppress emails locally.
 
 All emails share a common `layout()` wrapper that includes the Maakaf logo (`https://maakaf.com/images/logo-light.png`) at the top and a sign-off at the bottom.
 
