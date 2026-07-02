@@ -12,7 +12,7 @@ const db = () => admin.firestore();
 // ─── Validation helpers ───────────────────────────────────────────────────────
 
 function isValidRole(role: unknown): role is UserRole {
-  return role === "mentor" || role === "mentee" || role === "admin";
+  return role === "mentor" || role === "mentee";
 }
 
 function validateRegisterBody(body: Record<string, unknown>): string | null {
@@ -154,12 +154,6 @@ router.post("/register", async (req: Request, res: Response) => {
     const userDoc: UserDoc = { role: role!, fullName: fullName!, email: email!, isAdmin: false, createdAt: now };
     await db().collection("users").doc(uid).set(userDoc);
 
-    if (role === "admin") {
-      await admin.auth().updateUser(uid, { emailVerified: true });
-      res.status(201).json({ uid, email, role: "admin", pending: true });
-      return;
-    }
-
     await saveRoleProfile(uid, role as "mentor" | "mentee", fullName!, email!, body, now);
   } catch (err) {
     await admin.auth().deleteUser(uid).catch(() => {});
@@ -195,15 +189,8 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     return;
   }
 
-  let userRecord;
   try {
-    userRecord = await admin.auth().getUserByEmail(email);
-  } catch {
-    res.status(404).json({ error: { code: "USER_NOT_FOUND" } });
-    return;
-  }
-
-  try {
+    const userRecord = await admin.auth().getUserByEmail(email);
     const userRef  = db().collection("users").doc(userRecord.uid);
     const userDoc  = await userRef.get();
     const fullName = (userDoc.data()?.fullName as string) ?? email;
@@ -211,26 +198,37 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     await sendPasswordResetCode(email, fullName, code);
     console.log(`[reset] code sent to ${email}`);
   } catch (err) {
-    console.error("[reset] failed to send code:", err);
+    // Don't reveal whether the email exists — log and fall through
+    console.error("[reset] forgot-password error:", err);
   }
 
-  res.json({ ok: true, uid: userRecord.uid });
+  // Always respond ok — don't reveal whether the email exists
+  res.json({ ok: true });
 });
 
 // POST /auth/reset-password
 router.post("/reset-password", async (req: Request, res: Response) => {
-  const { uid, code, newPassword } = req.body as {
-    uid?: string; code?: string; newPassword?: string;
+  const { email, code, newPassword } = req.body as {
+    email?: string; code?: string; newPassword?: string;
   };
 
-  if (!uid || !code || !newPassword) {
+  if (!email || !code || !newPassword) {
     res.status(400).json({ error: { code: "MISSING_FIELDS" } });
     return;
   }
 
-  // Rate-limit: 5 attempts per 15 minutes per uid
-  if (!checkRateLimit(`reset:${uid}`, 5, 15 * 60 * 1000)) {
+  // Rate-limit: 5 attempts per 15 minutes per email
+  if (!checkRateLimit(`reset:${email}`, 5, 15 * 60 * 1000)) {
     res.status(429).json({ error: { code: "TOO_MANY_ATTEMPTS" } });
+    return;
+  }
+
+  let uid: string;
+  try {
+    const userRecord = await admin.auth().getUserByEmail(email);
+    uid = userRecord.uid;
+  } catch {
+    res.status(404).json({ error: { code: "USER_NOT_FOUND" } });
     return;
   }
 
@@ -247,7 +245,7 @@ router.post("/reset-password", async (req: Request, res: Response) => {
 
     await admin.auth().updateUser(uid, { password: newPassword });
     await clearOTP(userRef, "resetCode");
-    clearRateLimit(`reset:${uid}`);
+    clearRateLimit(`reset:${email}`);
 
     res.json({ ok: true });
   } catch (err: any) {
