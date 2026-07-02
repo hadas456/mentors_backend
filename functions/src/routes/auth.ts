@@ -189,15 +189,8 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     return;
   }
 
-  let userRecord;
   try {
-    userRecord = await admin.auth().getUserByEmail(email);
-  } catch {
-    res.status(404).json({ error: { code: "USER_NOT_FOUND" } });
-    return;
-  }
-
-  try {
+    const userRecord = await admin.auth().getUserByEmail(email);
     const userRef  = db().collection("users").doc(userRecord.uid);
     const userDoc  = await userRef.get();
     const fullName = (userDoc.data()?.fullName as string) ?? email;
@@ -205,10 +198,12 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     await sendPasswordResetCode(email, fullName, code);
     console.log(`[reset] code sent to ${email}`);
   } catch (err) {
-    console.error("[reset] failed to send code:", err);
+    // Don't reveal whether the email exists — log and fall through
+    console.error("[reset] forgot-password error:", err);
   }
 
-  res.json({ ok: true, uid: userRecord.uid });
+  // Always respond ok — don't reveal whether the email exists
+  res.json({ ok: true });
 });
 
 // POST /auth/reset-password
