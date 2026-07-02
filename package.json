@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "npm run dev --prefix functions",
     "build": "npm install --prefix functions && npm run build --prefix functions",
-    "start": "node functions/lib/server.js"
+    "start": "node functions/lib/server.js",
+    "test": "npm test --prefix functions"
   }
 }
