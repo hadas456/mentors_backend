@@ -12,7 +12,7 @@ const db = () => admin.firestore();
 // ─── Validation helpers ───────────────────────────────────────────────────────
 
 function isValidRole(role: unknown): role is UserRole {
-  return role === "mentor" || role === "mentee" || role === "admin";
+  return role === "mentor" || role === "mentee";
 }
 
 function validateRegisterBody(body: Record<string, unknown>): string | null {
@@ -153,12 +153,6 @@ router.post("/register", async (req: Request, res: Response) => {
     const now = admin.firestore.Timestamp.now();
     const userDoc: UserDoc = { role: role!, fullName: fullName!, email: email!, isAdmin: false, createdAt: now };
     await db().collection("users").doc(uid).set(userDoc);
-
-    if (role === "admin") {
-      await admin.auth().updateUser(uid, { emailVerified: true });
-      res.status(201).json({ uid, email, role: "admin", pending: true });
-      return;
-    }
 
     await saveRoleProfile(uid, role as "mentor" | "mentee", fullName!, email!, body, now);
   } catch (err) {
