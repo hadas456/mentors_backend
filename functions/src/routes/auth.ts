@@ -208,18 +208,27 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
 
 // POST /auth/reset-password
 router.post("/reset-password", async (req: Request, res: Response) => {
-  const { uid, code, newPassword } = req.body as {
-    uid?: string; code?: string; newPassword?: string;
+  const { email, code, newPassword } = req.body as {
+    email?: string; code?: string; newPassword?: string;
   };
 
-  if (!uid || !code || !newPassword) {
+  if (!email || !code || !newPassword) {
     res.status(400).json({ error: { code: "MISSING_FIELDS" } });
     return;
   }
 
-  // Rate-limit: 5 attempts per 15 minutes per uid
-  if (!checkRateLimit(`reset:${uid}`, 5, 15 * 60 * 1000)) {
+  // Rate-limit: 5 attempts per 15 minutes per email
+  if (!checkRateLimit(`reset:${email}`, 5, 15 * 60 * 1000)) {
     res.status(429).json({ error: { code: "TOO_MANY_ATTEMPTS" } });
+    return;
+  }
+
+  let uid: string;
+  try {
+    const userRecord = await admin.auth().getUserByEmail(email);
+    uid = userRecord.uid;
+  } catch {
+    res.status(404).json({ error: { code: "USER_NOT_FOUND" } });
     return;
   }
 
@@ -236,7 +245,7 @@ router.post("/reset-password", async (req: Request, res: Response) => {
 
     await admin.auth().updateUser(uid, { password: newPassword });
     await clearOTP(userRef, "resetCode");
-    clearRateLimit(`reset:${uid}`);
+    clearRateLimit(`reset:${email}`);
 
     res.json({ ok: true });
   } catch (err: any) {
