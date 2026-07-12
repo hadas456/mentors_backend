@@ -133,6 +133,7 @@ Authenticated endpoints expect `Authorization: Bearer <Firebase ID token>`.
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
+| GET | `/health` | — | Liveness check — returns `{ status: "ok" }` |
 | POST | `/auth/register` | — | Create account, send 6-digit OTP to email, return `uid` + `pendingVerification: true` |
 | POST | `/auth/verify-code` | — | Validate OTP (`uid`, `code`, `email`, `password`), mark email verified, auto-login — returns full session |
 | POST | `/auth/resend-verification` | — | Generate + send a fresh OTP to the given email |
