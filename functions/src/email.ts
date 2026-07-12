@@ -141,6 +141,23 @@ export async function sendMentorResponseEmail(
   );
 }
 
+export async function sendLoginCode(
+  to: string,
+  fullName: string,
+  code: string
+): Promise<void> {
+  await send(
+    to,
+    "קוד אימות להתחברות — מעקף מנטורינג",
+    layout(`
+      <h2>שלום ${escapeHtml(fullName)},</h2>
+      <p>זוהה ניסיון התחברות לחשבונך במערכת המנטורינג של מעקף. קוד האימות שלך:</p>
+      <div style="font-size:36px;font-weight:700;letter-spacing:10px;text-align:center;padding:20px;background:#f0f4f8;border-radius:8px;margin:16px 0;">${escapeHtml(code)}</div>
+      <p style="color:#666;font-size:13px;">הקוד תקף ל-15 דקות. אם לא ניסית להתחבר, מומלץ לשנות את הסיסמה שלך בהקדם.</p>
+    `)
+  );
+}
+
 export async function sendPasswordResetCode(
   to: string,
   fullName: string,

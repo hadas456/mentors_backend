@@ -138,6 +138,7 @@ vi.mock("../../src/email", () => ({
   sendNewRequestEmail: vi.fn().mockResolvedValue(undefined),
   sendMentorResponseEmail: vi.fn().mockResolvedValue(undefined),
   sendPasswordResetCode: vi.fn().mockResolvedValue(undefined),
+  sendLoginCode: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/notifications", () => ({
@@ -172,6 +173,7 @@ vi.mock("../../src/rateLimiter", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { IdentityToolkitError } from "../../src/identityToolkit";
+import { sendLoginCode } from "../../src/email";
 
 /* ------------------------------------------------------------------ */
 /*  Reset mutable state before each test                              */
@@ -193,6 +195,8 @@ beforeEach(() => {
 
   mockSignInWithPassword.mockReset();
   mockRefreshIdToken.mockReset();
+
+  vi.mocked(sendLoginCode).mockClear();
 });
 
 /* ================================================================== */
@@ -425,7 +429,7 @@ describe("POST /auth/login", () => {
     expect(res.body).toEqual({ error: { code: "EMAIL_NOT_FOUND" } });
   });
 
-  it("returns 200 with session data on successful login", async () => {
+  it("returns 200 with session data on successful admin login (no OTP required)", async () => {
     mockGetUserByEmailResult = { uid: "logged-in-uid", emailVerified: true };
     mockSignInWithPassword.mockResolvedValue({
       idToken: "id-token-123",
@@ -434,7 +438,7 @@ describe("POST /auth/login", () => {
       localId: "logged-in-uid",
       email: "user@test.com",
     });
-    mockUserDocData = { fullName: "Logged In User", role: "mentor", isAdmin: false };
+    mockUserDocData = { fullName: "Admin User", role: "admin", isAdmin: true };
 
     const res = await request(app)
       .post("/auth/login")
@@ -447,10 +451,251 @@ describe("POST /auth/login", () => {
       expiresIn: "3600",
       uid: "logged-in-uid",
       email: "user@test.com",
-      fullName: "Logged In User",
+      fullName: "Admin User",
+      role: "admin",
+      isAdmin: true,
+    });
+    expect(sendLoginCode).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 LOGIN_CODE_REQUIRED for a verified mentor/mentee after correct password", async () => {
+    mockGetUserByEmailResult = { uid: "mentor-uid", emailVerified: true };
+    mockSignInWithPassword.mockResolvedValue({
+      idToken: "id-token-123",
+      refreshToken: "refresh-token-456",
+      expiresIn: "3600",
+      localId: "mentor-uid",
+      email: "mentor@test.com",
+    });
+    mockUserDocData = { fullName: "Mentor User", role: "mentor", isAdmin: false };
+
+    const res = await request(app)
+      .post("/auth/login")
+      .send({ email: "mentor@test.com", password: "correctpass" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: { code: "LOGIN_CODE_REQUIRED" }, uid: "mentor-uid" });
+    expect(sendLoginCode).toHaveBeenCalledWith("mentor@test.com", "Mentor User", expect.any(String));
+  });
+
+  it("does not require login OTP when isAdmin is true even if role is not 'admin'", async () => {
+    mockGetUserByEmailResult = { uid: "flagged-admin-uid", emailVerified: true };
+    mockSignInWithPassword.mockResolvedValue({
+      idToken: "id-token-123",
+      refreshToken: "refresh-token-456",
+      expiresIn: "3600",
+      localId: "flagged-admin-uid",
+      email: "mentor-admin@test.com",
+    });
+    mockUserDocData = { fullName: "Mentor Admin", role: "mentor", isAdmin: true };
+
+    const res = await request(app)
+      .post("/auth/login")
+      .send({ email: "mentor-admin@test.com", password: "correctpass" });
+
+    expect(res.status).toBe(200);
+    expect(sendLoginCode).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 on wrong password without ever sending a login code", async () => {
+    mockGetUserByEmailResult = { uid: "test-uid", emailVerified: true };
+    mockSignInWithPassword.mockRejectedValue(new IdentityToolkitError("INVALID_PASSWORD"));
+
+    const res = await request(app)
+      .post("/auth/login")
+      .send({ email: "user@test.com", password: "wrongpass" });
+
+    expect(res.status).toBe(401);
+    expect(sendLoginCode).not.toHaveBeenCalled();
+  });
+});
+
+/* ================================================================== */
+/*  POST /auth/login/verify-code                                      */
+/* ================================================================== */
+describe("POST /auth/login/verify-code", () => {
+  it("returns 400 MISSING_FIELDS when uid is missing", async () => {
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ code: "123456", email: "a@b.com", password: "pass" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
+  });
+
+  it("returns 400 MISSING_FIELDS when code is missing", async () => {
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ uid: "test-uid", email: "a@b.com", password: "pass" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
+  });
+
+  it("returns 400 MISSING_FIELDS when email is missing", async () => {
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ uid: "test-uid", code: "123456", password: "pass" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
+  });
+
+  it("returns 400 MISSING_FIELDS when password is missing", async () => {
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ uid: "test-uid", code: "123456", email: "a@b.com" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
+  });
+
+  it("returns 400 INVALID_CODE when code does not match", async () => {
+    mockUserDocData = {
+      loginCode: "999999",
+      loginCodeExpiry: { toDate: () => new Date(Date.now() + 60_000) },
+      fullName: "Test",
       role: "mentor",
       isAdmin: false,
+    };
+
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ uid: "test-uid", code: "123456", email: "a@b.com", password: "pass" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "INVALID_CODE" } });
+  });
+
+  it("returns 400 CODE_EXPIRED when OTP has expired", async () => {
+    mockUserDocData = {
+      loginCode: "123456",
+      loginCodeExpiry: { toDate: () => new Date(Date.now() - 60_000) },
+      fullName: "Test",
+      role: "mentor",
+      isAdmin: false,
+    };
+
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ uid: "test-uid", code: "123456", email: "a@b.com", password: "pass" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "CODE_EXPIRED" } });
+  });
+
+  it("returns 200 with session data on valid code", async () => {
+    mockUserDocData = {
+      loginCode: "123456",
+      loginCodeExpiry: { toDate: () => new Date(Date.now() + 600_000) },
+      fullName: "Mentee User",
+      role: "mentee",
+      isAdmin: false,
+    };
+    mockSignInWithPassword.mockResolvedValue({
+      idToken: "login-2fa-id-token",
+      refreshToken: "login-2fa-refresh-token",
+      expiresIn: "3600",
+      localId: "test-uid",
+      email: "mentee@test.com",
     });
+
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ uid: "test-uid", code: "123456", email: "mentee@test.com", password: "pass" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      idToken: "login-2fa-id-token",
+      refreshToken: "login-2fa-refresh-token",
+      expiresIn: "3600",
+      uid: "test-uid",
+      email: "mentee@test.com",
+      fullName: "Mentee User",
+      role: "mentee",
+      isAdmin: false,
+    });
+    expect(mockDocUpdate).toHaveBeenCalledWith({
+      loginCode: "__FIELD_DELETE__",
+      loginCodeExpiry: "__FIELD_DELETE__",
+    });
+  });
+
+  it("returns 401 when the password no longer matches after OTP validates", async () => {
+    mockUserDocData = {
+      loginCode: "123456",
+      loginCodeExpiry: { toDate: () => new Date(Date.now() + 600_000) },
+      fullName: "Test",
+      role: "mentor",
+      isAdmin: false,
+    };
+    mockSignInWithPassword.mockRejectedValue(new IdentityToolkitError("INVALID_PASSWORD"));
+
+    const res = await request(app)
+      .post("/auth/login/verify-code")
+      .send({ uid: "test-uid", code: "123456", email: "a@b.com", password: "changedpass" });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: { code: "INVALID_PASSWORD" } });
+  });
+});
+
+/* ================================================================== */
+/*  POST /auth/login/resend-code                                      */
+/* ================================================================== */
+describe("POST /auth/login/resend-code", () => {
+  it("returns 400 MISSING_FIELDS when uid is missing", async () => {
+    const res = await request(app)
+      .post("/auth/login/resend-code")
+      .send({ email: "a@b.com" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
+  });
+
+  it("returns 400 MISSING_FIELDS when email is missing", async () => {
+    const res = await request(app)
+      .post("/auth/login/resend-code")
+      .send({ uid: "test-uid" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
+  });
+
+  it("returns 200 ok:true for a non-existent uid without leaking", async () => {
+    mockUserDocExists = false;
+
+    const res = await request(app)
+      .post("/auth/login/resend-code")
+      .send({ uid: "nobody-uid", email: "nobody@test.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(sendLoginCode).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 ok:true and sends a new code for an existing mentor/mentee", async () => {
+    mockUserDocData = { fullName: "Mentor User", role: "mentor", isAdmin: false };
+
+    const res = await request(app)
+      .post("/auth/login/resend-code")
+      .send({ uid: "test-uid", email: "mentor@test.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(sendLoginCode).toHaveBeenCalledWith("mentor@test.com", "Mentor User", expect.any(String));
+  });
+
+  it("returns 200 ok:true but does not send a code for an admin account", async () => {
+    mockUserDocData = { fullName: "Admin User", role: "admin", isAdmin: true };
+
+    const res = await request(app)
+      .post("/auth/login/resend-code")
+      .send({ uid: "admin-uid", email: "admin@test.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(sendLoginCode).not.toHaveBeenCalled();
   });
 });
 
@@ -629,18 +874,18 @@ describe("POST /auth/forgot-password", () => {
     expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
   });
 
-  it("returns 404 USER_NOT_FOUND when user does not exist", async () => {
+  it("returns 200 ok:true even for a non-existent email (does not leak account existence)", async () => {
     mockGetUserByEmailError = new Error("auth/user-not-found");
 
     const res = await request(app)
       .post("/auth/forgot-password")
       .send({ email: "nobody@test.com" });
 
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: { code: "USER_NOT_FOUND" } });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
   });
 
-  it("returns 200 with ok:true and uid on success", async () => {
+  it("returns 200 ok:true on success (never returns uid — the client identifies the account by email)", async () => {
     mockGetUserByEmailResult = { uid: "forgot-uid", emailVerified: true };
     mockUserDocData = { fullName: "Forgot User" };
 
@@ -649,7 +894,7 @@ describe("POST /auth/forgot-password", () => {
       .send({ email: "forgot@test.com" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, uid: "forgot-uid" });
+    expect(res.body).toEqual({ ok: true });
   });
 });
 
@@ -657,7 +902,7 @@ describe("POST /auth/forgot-password", () => {
 /*  POST /auth/reset-password                                         */
 /* ================================================================== */
 describe("POST /auth/reset-password", () => {
-  it("returns 400 MISSING_FIELDS when uid is missing", async () => {
+  it("returns 400 MISSING_FIELDS when email is missing", async () => {
     const res = await request(app)
       .post("/auth/reset-password")
       .send({ code: "123456", newPassword: "NewPass123" });
@@ -669,7 +914,7 @@ describe("POST /auth/reset-password", () => {
   it("returns 400 MISSING_FIELDS when code is missing", async () => {
     const res = await request(app)
       .post("/auth/reset-password")
-      .send({ uid: "test-uid", newPassword: "NewPass123" });
+      .send({ email: "a@b.com", newPassword: "NewPass123" });
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
@@ -678,10 +923,21 @@ describe("POST /auth/reset-password", () => {
   it("returns 400 MISSING_FIELDS when newPassword is missing", async () => {
     const res = await request(app)
       .post("/auth/reset-password")
-      .send({ uid: "test-uid", code: "123456" });
+      .send({ email: "a@b.com", code: "123456" });
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: { code: "MISSING_FIELDS" } });
+  });
+
+  it("returns 404 USER_NOT_FOUND when the email does not resolve to an account", async () => {
+    mockGetUserByEmailError = new Error("auth/user-not-found");
+
+    const res = await request(app)
+      .post("/auth/reset-password")
+      .send({ email: "nobody@test.com", code: "123456", newPassword: "NewPass123" });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: { code: "USER_NOT_FOUND" } });
   });
 
   it("returns 400 INVALID_CODE on wrong code", async () => {
@@ -692,7 +948,7 @@ describe("POST /auth/reset-password", () => {
 
     const res = await request(app)
       .post("/auth/reset-password")
-      .send({ uid: "test-uid", code: "123456", newPassword: "NewPass123" });
+      .send({ email: "user@test.com", code: "123456", newPassword: "NewPass123" });
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: { code: "INVALID_CODE" } });
@@ -706,7 +962,7 @@ describe("POST /auth/reset-password", () => {
 
     const res = await request(app)
       .post("/auth/reset-password")
-      .send({ uid: "test-uid", code: "123456", newPassword: "NewPass123" });
+      .send({ email: "user@test.com", code: "123456", newPassword: "NewPass123" });
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: { code: "CODE_EXPIRED" } });
@@ -720,11 +976,11 @@ describe("POST /auth/reset-password", () => {
 
     const res = await request(app)
       .post("/auth/reset-password")
-      .send({ uid: "test-uid", code: "123456", newPassword: "NewPass123" });
+      .send({ email: "user@test.com", code: "123456", newPassword: "NewPass123" });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
-    // Password should have been updated
+    // Password should have been updated, uid resolved server-side via getUserByEmail
     expect(mockUpdateUser).toHaveBeenCalledWith("test-uid", { password: "NewPass123" });
   });
 });
