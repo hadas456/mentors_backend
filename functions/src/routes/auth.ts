@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import * as admin from "firebase-admin";
 import { MentorProfile, MenteeProfile, UserDoc, UserRole } from "../types";
 import { signInWithPassword, refreshIdToken, IdentityToolkitError } from "../identityToolkit";
-import { sendVerificationCode, sendPasswordResetCode } from "../email";
+import { sendVerificationCode, sendPasswordResetCode, sendLoginCode } from "../email";
 import { generateOTP, getOTPExpiry, timingSafeEqual, parseAvailability } from "../utils";
 import { checkRateLimit, clearRateLimit } from "../rateLimiter";
 
@@ -12,7 +12,7 @@ const db = () => admin.firestore();
 // ─── Validation helpers ───────────────────────────────────────────────────────
 
 function isValidRole(role: unknown): role is UserRole {
-  return role === "mentor" || role === "mentee";
+  return role === "mentor" || role === "mentee" || role === "admin";
 }
 
 function validateRegisterBody(body: Record<string, unknown>): string | null {
@@ -89,7 +89,7 @@ async function saveRoleProfile(
 
 async function issueOTP(
   userRef: admin.firestore.DocumentReference,
-  field: "verificationCode" | "resetCode"
+  field: "verificationCode" | "resetCode" | "loginCode"
 ): Promise<string> {
   const code   = generateOTP();
   const expiry = getOTPExpiry();
@@ -103,7 +103,7 @@ async function issueOTP(
 function validateOTP(
   data: admin.firestore.DocumentData,
   submittedCode: string,
-  field: "verificationCode" | "resetCode"
+  field: "verificationCode" | "resetCode" | "loginCode"
 ): "ok" | "INVALID_CODE" | "CODE_EXPIRED" {
   const stored = data[field];
   const expiry = data[`${field}Expiry`] as admin.firestore.Timestamp | undefined;
@@ -116,12 +116,17 @@ function validateOTP(
 
 async function clearOTP(
   userRef: admin.firestore.DocumentReference,
-  field: "verificationCode" | "resetCode"
+  field: "verificationCode" | "resetCode" | "loginCode"
 ): Promise<void> {
   await userRef.update({
     [field]:            admin.firestore.FieldValue.delete(),
     [`${field}Expiry`]: admin.firestore.FieldValue.delete(),
   });
+}
+
+/** True for admin accounts, which are exempt from mandatory login OTP. */
+function isAdminAccount(data: admin.firestore.DocumentData | undefined): boolean {
+  return data?.isAdmin === true || data?.role === "admin";
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -154,11 +159,25 @@ router.post("/register", async (req: Request, res: Response) => {
     const userDoc: UserDoc = { role: role!, fullName: fullName!, email: email!, isAdmin: false, createdAt: now };
     await db().collection("users").doc(uid).set(userDoc);
 
-    await saveRoleProfile(uid, role as "mentor" | "mentee", fullName!, email!, body, now);
+    if (role === "mentor" || role === "mentee") {
+      await saveRoleProfile(uid, role, fullName!, email!, body, now);
+    }
   } catch (err) {
     await admin.auth().deleteUser(uid).catch(() => {});
     console.error("Register: Firestore write failed", err);
     res.status(500).json({ error: { code: "INTERNAL_ERROR" } });
+    return;
+  }
+
+  if (role === "admin") {
+    // Admin accounts skip email-OTP verification entirely; access is instead
+    // gated by isAdmin (set false above) until an existing admin approves them.
+    try {
+      await admin.auth().updateUser(uid, { emailVerified: true });
+    } catch (err) {
+      console.error("Register: failed to mark admin account emailVerified", err);
+    }
+    res.status(201).json({ uid, email, role, pending: true });
     return;
   }
 
@@ -396,8 +415,29 @@ router.post("/login", async (req: Request, res: Response) => {
 
   try {
     const session = await signInWithPassword(email, password);
-    const userDoc = await db().collection("users").doc(session.localId).get();
+    const userRef = db().collection("users").doc(session.localId);
+    const userDoc = await userRef.get();
     const data    = userDoc.data();
+
+    if (!isAdminAccount(data)) {
+      // Mandatory login OTP for mentor/mentee accounts. Password is already
+      // validated above, so we never email a code to an unauthenticated caller.
+      if (!checkRateLimit(`login-otp:${session.localId}`, 5, 15 * 60 * 1000)) {
+        res.status(429).json({ error: { code: "TOO_MANY_ATTEMPTS" } });
+        return;
+      }
+      try {
+        const fullName = (data?.fullName as string) ?? email;
+        const code     = await issueOTP(userRef, "loginCode");
+        await sendLoginCode(email, fullName, code);
+        console.log(`[login-otp] code sent to ${email}`);
+      } catch (codeErr) {
+        console.error("[login-otp] failed to send code:", codeErr);
+      }
+      res.status(403).json({ error: { code: "LOGIN_CODE_REQUIRED" }, uid: session.localId });
+      return;
+    }
+
     clearRateLimit(`login:${email}`);
     res.json({
       idToken:      session.idToken,
@@ -413,6 +453,93 @@ router.post("/login", async (req: Request, res: Response) => {
     const code = err instanceof IdentityToolkitError ? err.code : "UNKNOWN_ERROR";
     res.status(401).json({ error: { code } });
   }
+});
+
+// POST /auth/login/verify-code
+router.post("/login/verify-code", async (req: Request, res: Response) => {
+  const { uid, code, email, password } = req.body as {
+    uid?: string; code?: string; email?: string; password?: string;
+  };
+
+  if (!uid || !code || !email || !password) {
+    res.status(400).json({ error: { code: "MISSING_FIELDS" } });
+    return;
+  }
+
+  // Rate-limit: 5 attempts per 15 minutes per uid
+  if (!checkRateLimit(`login-verify:${uid}`, 5, 15 * 60 * 1000)) {
+    res.status(429).json({ error: { code: "TOO_MANY_ATTEMPTS" } });
+    return;
+  }
+
+  try {
+    const userRef = db().collection("users").doc(uid);
+    const userDoc = await userRef.get();
+    const data    = userDoc.data();
+
+    const result = validateOTP(data ?? {}, code, "loginCode");
+    if (result !== "ok") {
+      res.status(400).json({ error: { code: result } });
+      return;
+    }
+
+    await clearOTP(userRef, "loginCode");
+    clearRateLimit(`login-verify:${uid}`);
+    clearRateLimit(`login-otp:${uid}`);
+    clearRateLimit(`login:${email}`);
+
+    const session = await signInWithPassword(email, password);
+    res.json({
+      idToken:      session.idToken,
+      refreshToken: session.refreshToken,
+      expiresIn:    session.expiresIn,
+      uid:          session.localId,
+      email:        session.email,
+      fullName:     (data?.fullName as string) ?? null,
+      role:         (data?.role as string) ?? null,
+      isAdmin:      (data?.isAdmin as boolean) ?? false,
+    });
+  } catch (err) {
+    if (err instanceof IdentityToolkitError) {
+      res.status(401).json({ error: { code: err.code } });
+      return;
+    }
+    console.error("login/verify-code error:", err);
+    res.status(500).json({ error: { code: "INTERNAL_ERROR" } });
+  }
+});
+
+// POST /auth/login/resend-code
+router.post("/login/resend-code", async (req: Request, res: Response) => {
+  const { uid, email } = req.body as { uid?: string; email?: string };
+  if (!uid || !email) {
+    res.status(400).json({ error: { code: "MISSING_FIELDS" } });
+    return;
+  }
+
+  // Rate-limit: 3 resends per 10 minutes per uid
+  if (!checkRateLimit(`login-resend:${uid}`, 3, 10 * 60 * 1000)) {
+    res.status(429).json({ error: { code: "TOO_MANY_ATTEMPTS" } });
+    return;
+  }
+
+  try {
+    const userRef = db().collection("users").doc(uid);
+    const userDoc = await userRef.get();
+    if (userDoc.exists) {
+      const data = userDoc.data();
+      if (!isAdminAccount(data)) {
+        const fullName = (data?.fullName as string) ?? email;
+        const code     = await issueOTP(userRef, "loginCode");
+        await sendLoginCode(email, fullName, code);
+      }
+    }
+  } catch (err) {
+    console.error("login/resend-code error:", err);
+  }
+
+  // Always respond ok — don't leak existence or admin status
+  res.json({ ok: true });
 });
 
 export default router;
