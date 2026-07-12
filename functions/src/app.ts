@@ -31,6 +31,11 @@ app.use(cors({
 
 app.use(express.json({ limit: "50kb" }));
 
+/** Liveness probe — no auth, no side effects. Useful for local checks and future hosting. */
+app.get("/health", (_req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 app.use("/auth", authRouter);
 app.use("/topics", topicsRouter);
 app.use("/mentors", mentorsRouter);
