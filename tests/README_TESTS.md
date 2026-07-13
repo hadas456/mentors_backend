@@ -52,16 +52,24 @@ previous run, making the suite fully **idempotent** — safe to run repeatedly.
 
 ### OTP automation
 
-Email verification and password reset normally require reading a code from an
-inbox. When `ENABLE_DEV_ENDPOINTS=true`, two test-only endpoints are available:
+Email verification, login, and password reset normally require reading a code
+from an inbox. When `ENABLE_DEV_ENDPOINTS=true`, two test-only endpoints are
+available:
 
 | Endpoint | Purpose |
 |---|---|
 | `DELETE /auth/dev/cleanup` | Wipe test users from Firebase Auth + Firestore |
-| `GET /auth/dev/peek-otp/:uid` | Read the current OTP code for a user from Firestore |
+| `GET /auth/dev/peek-otp/:uid` | Read the current `verificationCode`, `resetCode`, and `loginCode` for a user from Firestore |
 
 Postman pre-request scripts call `peek-otp` automatically before each OTP
 submission step, so the full verification flow runs without any human input.
+
+`POST /auth/login` requires a fresh email code on every mentor/mentee login
+(admin accounts are exempt). Every "Login"/"Switch to \* Token" request in
+this collection handles that as a single step: its pre-request script first
+calls `/auth/login` to trigger issuance, peeks the resulting `loginCode`, and
+the request itself submits that code to `POST /auth/login/verify-code` to get
+the session. No separate visible step is needed.
 
 > **These endpoints return 404 in production.** They are only registered when
 > `ENABLE_DEV_ENDPOINTS=true` and that variable must never be set on the
