@@ -32,7 +32,7 @@ Only loaded when `ENABLE_DEV_ENDPOINTS=true`. Never registered in production.
 
 | File | Purpose |
 | --- | --- |
-| `routes.ts` | `DELETE /auth/dev/cleanup` — wipe test users; `GET /auth/dev/peek-otp/:uid` — read OTP from Firestore for automated Postman tests |
+| `routes.ts` | `DELETE /auth/dev/cleanup` — wipe test users; `GET /auth/dev/peek-otp/:uid` — read `verificationCode`/`resetCode`/`loginCode` from Firestore for automated Postman tests |
 
 `functions/src/index.ts` is a dormant Firebase Cloud Functions entry kept for future
 use if the project moves to the Firebase Blaze billing plan.
@@ -50,6 +50,8 @@ users/{uid}
   verificationCodeExpiry   (Timestamp — code valid for 15 minutes)
   resetCode                (temporary — present only during an active password reset)
   resetCodeExpiry          (Timestamp — code valid for 15 minutes)
+  loginCode                (temporary — present only while a login is pending its OTP step)
+  loginCodeExpiry          (Timestamp — code valid for 15 minutes)
 
 mentorProfiles/{uid}
   userId
@@ -134,12 +136,14 @@ Authenticated endpoints expect `Authorization: Bearer <Firebase ID token>`.
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | GET | `/health` | — | Liveness check — returns `{ status: "ok" }` |
-| POST | `/auth/register` | — | Create account, send 6-digit OTP to email, return `uid` + `pendingVerification: true` |
-| POST | `/auth/verify-code` | — | Validate OTP (`uid`, `code`, `email`, `password`), mark email verified, auto-login — returns full session |
-| POST | `/auth/resend-verification` | — | Generate + send a fresh OTP to the given email |
-| POST | `/auth/login` | — | Sign in; if email unverified, sends fresh OTP and returns `403 EMAIL_NOT_VERIFIED` + `uid` |
-| POST | `/auth/forgot-password` | — | Check email is registered (`USER_NOT_FOUND` if not), send 6-digit reset code, return `{ ok, uid }` |
-| POST | `/auth/reset-password` | — | Validate reset code, set new password via Admin SDK, clear code from Firestore |
+| POST | `/auth/register` | — | Create account. Mentor/mentee: send 6-digit OTP to email, return `uid` + `pendingVerification: true`. Admin (`role:"admin"`): no OTP, `emailVerified` set true immediately, `isAdmin` stays false pending manual approval — returns `uid` + `pending: true` |
+| POST | `/auth/verify-code` | — | Validate registration OTP (`uid`, `code`, `email`, `password`), mark email verified, auto-login — returns full session |
+| POST | `/auth/resend-verification` | — | Generate + send a fresh registration OTP to the given email |
+| POST | `/auth/login` | — | Sign in. If email unverified, sends a fresh OTP and returns `403 EMAIL_NOT_VERIFIED` + `uid`. Otherwise, for mentor/mentee accounts, validates the password then sends a fresh login OTP and returns `403 LOGIN_CODE_REQUIRED` + `uid` (mandatory 2FA on every login). Admin accounts are exempt and get a full session directly |
+| POST | `/auth/login/verify-code` | — | Validate the login OTP (`uid`, `code`, `email`, `password`) and return a full session |
+| POST | `/auth/login/resend-code` | — | Generate + send a fresh login OTP (`uid`, `email`); always responds `{ ok: true }`, never leaks account state |
+| POST | `/auth/forgot-password` | — | Send a 6-digit reset code if the email is registered; always responds `{ ok: true }` — never reveals whether the email exists, never returns a `uid` |
+| POST | `/auth/reset-password` | — | Validate reset code by `email` (`404 USER_NOT_FOUND` if unregistered), set new password via Admin SDK, clear code from Firestore |
 | GET | `/auth/verify-status/:uid` | — | Check whether a user's email has been verified |
 | POST | `/auth/refresh` | — | Exchange a refresh token for a new ID token |
 | GET | `/topics` | — | List shared mentorship topics |
@@ -219,7 +223,7 @@ First time only: `cd functions && npm install`.
 | --- | --- |
 | **HTTP security headers** | Helmet sets `X-Content-Type-Options`, `Strict-Transport-Security`, `X-Frame-Options`, and 10+ others on every response. |
 | **Startup validation** | Server exits on startup if any required env var is missing; logs a loud warning if `ENABLE_DEV_ENDPOINTS=true`. |
-| **Rate limiting** | Login: 10/15 min per email. OTP verify & reset: 5/15 min per UID. Forgot-password & resend: 3/10 min per email. Blocked → `429 TOO_MANY_ATTEMPTS`. Counter cleared on success. |
+| **Rate limiting** | Login: 10/15 min per email. Registration-OTP verify & password reset: 5/15 min per UID. Login-OTP issuance & verify: 5/15 min per UID. Forgot-password, resend-verification & login-OTP resend: 3/10 min per email or UID. Blocked → `429 TOO_MANY_ATTEMPTS`. Counter cleared on success. |
 | **Timing-safe OTP** | Code comparisons use `crypto.timingSafeEqual()` to prevent timing-based enumeration. |
 | **Crypto-random OTP** | `crypto.randomInt()` — uniform distribution, no modulo bias. |
 | **CORS** | Restricted to `CORS_ORIGIN` env var; all other origins rejected. |
@@ -239,12 +243,16 @@ All emails share a common `layout()` wrapper that includes the Maakaf logo (`htt
 | --- | --- | --- |
 | New user registers (mentor/mentee) | The new user | קוד האימות שלך — מעקף מנטורינג |
 | Unverified user tries to log in | The user | קוד האימות שלך — מעקף מנטורינג |
-| User requests a new OTP code | The user | קוד האימות שלך — מעקף מנטורינג |
+| User requests a new registration OTP code | The user | קוד האימות שלך — מעקף מנטורינג |
+| Verified mentor/mentee logs in (every time) | The user | קוד אימות להתחברות — מעקף מנטורינג |
 | Mentee submits a request | The mentor | בקשת מנטורינג חדשה מ-{menteeName} (includes description + deep-link to request) |
 | Mentor responds to a request | The mentee | עדכון בקשת המנטורינג שלך — {status} (includes response text + deep-link to request) |
 | User requests password reset | The user | קוד לאיפוס סיסמה — מעקף מנטורינג |
 
-Admin accounts (`role: "admin"`) are created without email verification and without sending an email. They require manual activation (`isAdmin: true`) in Firestore before they can access admin endpoints.
+Admin accounts (`role: "admin"`) are created with `emailVerified` already set to `true` —
+skipping the OTP-verification step entirely — and without sending any email. They also
+skip the mandatory login-OTP step on every login. They require manual activation
+(`isAdmin: true`) in Firestore before they can access admin endpoints.
 
 Email CTAs link directly to the specific request card via `#req-{requestId}` anchors on the dashboard pages.
 

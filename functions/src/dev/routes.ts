@@ -49,6 +49,7 @@ router.get("/peek-otp/:uid", async (req, res) => {
     res.json({
       verificationCode: data.verificationCode ?? null,
       resetCode:        data.resetCode ?? null,
+      loginCode:        data.loginCode ?? null,
     });
   } catch (err) {
     console.error("dev/peek-otp error:", err);
